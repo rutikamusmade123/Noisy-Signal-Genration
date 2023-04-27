@@ -1,0 +1,60 @@
+#include <iostream>
+#include <cmath>
+#include <vector>
+#include <random>
+#include <chrono>
+#include <Eigen/Dense>
+
+using namespace Eigen;
+
+int main() {
+    // Parameters
+    const double fs = 1000;  // Sampling frequency [Hz]
+    const double tmax = 1;  // Maximum time [s]
+    const double f1 = 10;  // Frequency of sinusoids [Hz]
+    const double f2 = 12;
+    const double f3 = 13;
+    const double A1 = 1;  // Amplitude of sinusoids
+    const double A2 = 0.8;
+    const double A3 = 0.6;
+    const double noise_level = 0.1;  // RMS noise level [V]
+
+    // Generate signal
+    const int N = tmax * fs;  // Number of samples
+    std::vector<double> signal(N);
+    const double dt = 1 / fs;  // Time step [s]
+    for (int n = 0; n < N; ++n) {
+        const double t = n * dt;
+        signal[n] = A1 * std::sin(2 * M_PI * f1 * t) + A2 * std::sin(2 * M_PI * f2 * t) + A3 * std::sin(2 * M_PI * f3 * t);
+    }
+
+    // Generate noise
+    std::default_random_engine generator(std::chrono::system_clock::now().time_since_epoch().count());
+    std::normal_distribution<double> distribution(0, noise_level);
+    for (int n = 0; n < N; ++n) {
+        signal[n] += distribution(generator);
+    }
+
+    // Denoise signal using SVD
+    const MatrixXd X = Map<const MatrixXd>(signal.data(), N, 1);
+    JacobiSVD<MatrixXd> svd(X, ComputeThinU | ComputeThinV);
+    const MatrixXd U = svd.matrixU();
+    const MatrixXd V = svd.matrixV();
+    const VectorXd S = svd.singularValues();
+    const double threshold = noise_level * std::sqrt(N);  // Set threshold based on noise level
+    const VectorXd S_denoised = (S.array() > threshold).select(S, VectorXd::Zero(N));  // Threshold singular values
+    const MatrixXd X_denoised = U * S_denoised.asDiagonal() * V.transpose();  // Reconstruct denoised signal
+    std::vector<double> signal_denoised(N);
+    Map<MatrixXd>(signal_denoised.data(), N, 1) = X_denoised;
+
+    // Calculate quality metric
+    const double noise_power = noise_level * noise_level;
+    const double signal_power = (X.transpose() * X)(0);
+    const double signal_denoised_power = (X_denoised.transpose() * X_denoised)(0);
+    const double SNR_before = 10 * std::log10(signal_power / noise_power);
+    const double SNR_after = 10 * std::log10(signal_denoised_power / noise_power);
+    std::cout << "SNR before denoising: " << SNR_before << " dB\n";
+    std::cout << "SNR after denoising: " << SNR_after << " dB\n";
+
+    return 0;
+}
